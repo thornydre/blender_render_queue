@@ -27,6 +27,16 @@ class BlenderRenderQueue(QMainWindow):
 
 		self.list_layout = QVBoxLayout()
 
+		step_layout = QHBoxLayout()
+
+		step_label = QLabel("Step")
+
+		self.step_textfield = QLineEdit()
+		self.step_textfield.setText("1")
+
+		step_layout.addWidget(step_label)
+		step_layout.addWidget(self.step_textfield)
+
 		self.render_button = QPushButton("Render")
 		self.render_button.clicked.connect(self.startRender)
 
@@ -34,6 +44,7 @@ class BlenderRenderQueue(QMainWindow):
 		self.vert_layout.addWidget(title_label)
 		self.vert_layout.addWidget(self.add_file_button)
 		self.vert_layout.addLayout(self.list_layout)
+		self.vert_layout.addLayout(step_layout)
 		self.vert_layout.addWidget(self.render_button)
 
 		main_widget.setLayout(self.vert_layout)
@@ -57,7 +68,7 @@ class BlenderRenderQueue(QMainWindow):
 		
 		for render_item in self.render_items:
 			if render_item.isChecked():
-				render_args = [blender_path, "-b", render_item.getPath(), "-j", "1", "-E", "CYCLES", "-a", "--", "--cycles-device", "OPTIX+CPU"]
+				render_args = [blender_path, "-b", render_item.getPath(), "-j", self.step_textfield.getText(), "-E", "CYCLES", "-a", "--", "--cycles-device", "OPTIX+CPU"]
 
 				proc = subprocess.Popen(render_args)
 				proc.wait()
@@ -69,7 +80,6 @@ class RenderItem(QWidget):
 	def __init__(self, file_path, *args, **kwargs):
 		super(RenderItem, self).__init__(*args, **kwargs)
 
-		self.checked = True
 		self.file_path = file_path
 		self.done = False
 
@@ -79,8 +89,8 @@ class RenderItem(QWidget):
 	def initUI(self):
 		layout = QHBoxLayout()
 
-		checked_checkbox = QCheckBox()
-		checked_checkbox.setChecked(self.checked)
+		self.checked_checkbox = QCheckBox()
+		self.checked_checkbox.setChecked(True)
 
 		file_path_label = QLabel(self.file_path)
 
@@ -90,7 +100,7 @@ class RenderItem(QWidget):
 		remove_button = QPushButton("Remove")
 		remove_button.clicked.connect(self.removeCommand)
 
-		layout.addWidget(checked_checkbox)
+		layout.addWidget(self.checked_checkbox)
 		layout.addWidget(file_path_label)
 		layout.addWidget(self.done_checkbox)
 		layout.addWidget(remove_button)
@@ -100,11 +110,11 @@ class RenderItem(QWidget):
 
 	def removeCommand(self):
 		self.deleteLater()
-		self.checked = False
+		self.checked_checkbox.setChecked(False)
 
 
 	def isChecked(self):
-		return self.checked
+		return self.checked_checkbox.getChecked()
 
 
 	def getPath(self):
@@ -112,8 +122,7 @@ class RenderItem(QWidget):
 
 
 	def setDone(self, done):
-		self.done = done
-		self.done_checkbox.setChecked(self.done)
+		self.done_checkbox.setChecked(True)
 
 
 def main():
