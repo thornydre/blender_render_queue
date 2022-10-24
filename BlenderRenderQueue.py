@@ -68,7 +68,7 @@ class BlenderRenderQueue(QMainWindow):
 		
 		for render_item in self.render_items:
 			if render_item.isChecked():
-				render_args = [blender_path, "-b", render_item.getPath(), "-j", self.step_textfield.getText(), "-E", "CYCLES", "-a", "--", "--cycles-device", "OPTIX+CPU"]
+				render_args = [blender_path, "-b", render_item.getPath(), "-j", self.step_textfield.text(), "-E", "CYCLES", "-a", "--", "--cycles-device", "OPTIX+CPU"]
 
 				proc = subprocess.Popen(render_args)
 				proc.wait()
@@ -114,7 +114,7 @@ class RenderItem(QWidget):
 
 
 	def isChecked(self):
-		return self.checked_checkbox.getChecked()
+		return self.checked_checkbox.isChecked()
 
 
 	def getPath(self):
