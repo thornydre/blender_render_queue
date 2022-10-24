@@ -2,7 +2,7 @@ import sys
 
 from subprocess import PIPE, Popen
 from PySide6.QtWidgets import QMainWindow, QApplication, QLabel, QPushButton, QVBoxLayout, QHBoxLayout, QWidget, QCheckBox, QFileDialog, QLineEdit, QProgressBar
-from PySide6.QtCore import QFile, QTextStream, Signal
+from PySide6.QtCore import QFile, QTextStream, QObject, Signal
 from threading  import Thread
 
 
@@ -85,9 +85,6 @@ class BlenderRenderQueue(QMainWindow):
 		self.render_button = QPushButton("Render")
 		self.render_button.clicked.connect(self.startRender)
 
-		self.stop_render_button = QPushButton("Stop Render")
-		self.stop_render_button.clicked.connect(self.stopRender)
-
 		main_layout = QVBoxLayout()
 		main_layout.addWidget(title_label)
 		main_layout.addWidget(self.display_overrides_button)
@@ -96,7 +93,6 @@ class BlenderRenderQueue(QMainWindow):
 		main_layout.addLayout(self.list_layout)
 		main_layout.addLayout(step_layout)
 		main_layout.addWidget(self.render_button)
-		main_layout.addWidget(self.stop_render_button)
 		main_layout.addStretch()
 
 		main_widget.setLayout(main_layout)
@@ -108,7 +104,7 @@ class BlenderRenderQueue(QMainWindow):
 		blend_files = QFileDialog.getOpenFileNames(caption="Select blend file to render", filter="Blend Files (*.blend);;All Files (*)")
 
 		for blend_file in blend_files[0]:
-			render_item = RenderItem(blend_file)
+			render_item = RenderItem(self, blend_file)
 
 			self.list_layout.addWidget(render_item)
 
@@ -133,56 +129,31 @@ class BlenderRenderQueue(QMainWindow):
 
 
 	def startRender(self):
-		blender_path = "F:/prog/blender_git/branches/master_branch/bin/Release/blender.exe"
-		blender_path = "C:/Program Files/Blender Foundation/Blender 3.2/blender.exe"
-		
-		for render_item in self.render_items:
-			if render_item.isChecked():
-				script = "import bpy\n"
+		data = {"render_items": [render_item.renderer for render_item in self.render_items if render_item.isChecked()],
+				"max_samples": self.max_samples_textfield.text(),
+				"min_samples": self.min_samples_textfield.text(),
+				"time_limit": self.time_limit_textfield.text(),
+				"step": self.step_textfield.text(),
+				"overrides": self.overrides_checkbox.isChecked()
+		}
 
-				if self.overrides_checkbox.isChecked():
-					script += f"bpy.context.scene.cycles.samples = {self.max_samples_textfield.text()}\n"
-					script += f"bpy.context.scene.cycles.adaptive_min_samples = {self.min_samples_textfield.text()}\n"
-
-					script += f"bpy.context.scene.cycles.time_limit = {self.time_limit_textfield.text()}\n"
-
-				render_args = [blender_path, "-b", render_item.getPath(), "--python-expr", script, "-j", self.step_textfield.text(), "-E", "CYCLES", "-a", "--", "--cycles-device", "OPTIX+CPU"]
-
-				proc = Popen(render_args, stdout=PIPE, bufsize=1)
-				self.stop_thread = False
-				self.render_thread = Thread(target=self.enqueueOutput, args=(lambda:self.stop_thread, proc.stdout, render_item), daemon=True)
-				self.render_thread.start()
-
-
-	def stopRender(self):
-		self.stop_thread = True
-		self.render_thread.join()
-
-
-	def enqueueOutput(self, stop_thread, out, render_item):
-		for byte_line in iter(out.readline, b""):
-			line = byte_line.decode("utf-8")
-			print(line)
-			samples = line.split("|")[-1].lower()
-			if "sample" in samples:
-				percent = eval(samples.split()[-1]) * 100
-				# print(percent)
-				render_item.setProgress(percent)
-		out.close()
-
-		render_item.setProgress(1.0)
-		render_item.setDone(True)
+		self.render_queue_thread = RenderQueueThread(data)
 
 
 class RenderItem(QWidget):
-	def __init__(self, file_path, *args, **kwargs):
+	def __init__(self, parent, file_path, *args, **kwargs):
 		super(RenderItem, self).__init__(*args, **kwargs)
 
+		self.parent = parent
 		self.file_path = file_path
 		self.done = False
-		self.progress_changed = Signal(int)
 
 		self.initUI()
+
+		self.render_thread = RenderThread()
+		self.render_thread.progression_signal.connect(self.progress_bar.setValue)
+
+		self.renderer = RenderItemRenderer(self.file_path, self.render_thread)
 
 
 	def initUI(self):
@@ -195,20 +166,16 @@ class RenderItem(QWidget):
 
 		file_path_label = QLabel(self.file_path)
 
-		self.done_checkbox = QCheckBox()
-		self.done_checkbox.setChecked(self.done)
-
 		remove_button = QPushButton("Remove")
 		remove_button.clicked.connect(self.removeCommand)
 
 		line1_layout.addWidget(self.checked_checkbox)
 		line1_layout.addWidget(file_path_label)
-		line1_layout.addWidget(self.done_checkbox)
 		line1_layout.addWidget(remove_button)
 
 		self.progress_bar = QProgressBar()
-		self.progress_bar.setRange(0.0, 100.0)
-		self.progress_changed.connect(self.progress_bar.setValue)
+		self.progress_bar.setRange(0, 100)
+		self.progress_bar.setValue(0)
 
 		main_layout.addLayout(line1_layout)
 		main_layout.addWidget(self.progress_bar)
@@ -217,6 +184,7 @@ class RenderItem(QWidget):
 
 
 	def removeCommand(self):
+		self.parent.render_items.remove(self)
 		self.deleteLater()
 		self.checked_checkbox.setChecked(False)
 
@@ -229,12 +197,71 @@ class RenderItem(QWidget):
 		return self.file_path
 
 
-	def setDone(self, done):
-		self.done_checkbox.setChecked(True)
+class RenderItemRenderer:
+	def __init__(self, file_path, thread):
+		self.file_path = file_path
+
+		self.thread = thread
 
 
-	def setProgress(self, value):
-		self.progress_changed.emit(value)
+	def render(self, step, script):
+		blender_path = "F:/prog/blender_git/branches/master_branch/bin/Release/blender.exe"
+
+		render_args = [blender_path, "-b", self.file_path, "--python-expr", script, "-j", step, "-E", "CYCLES", "-a", "--", "--cycles-device", "OPTIX+CPU"]
+
+		proc = Popen(render_args, stdout=PIPE)
+
+		self.thread.start(proc)
+
+		
+
+
+class RenderQueueThread(QObject):
+	def __init__(self, data, *args, **kwargs):
+		super(RenderQueueThread, self).__init__(*args, **kwargs)
+
+		self.thread = Thread(target=self.run, args=(data, ), daemon=True)
+		self.thread.start()
+
+
+	def run(self, data):
+		for render_item in data['render_items']:
+			script = "import bpy\n"
+
+			if data['overrides']:
+				script += f"bpy.context.scene.cycles.samples = {data['max_samples']}\n"
+				script += f"bpy.context.scene.cycles.adaptive_min_samples = {data['min_samples']}\n"
+
+				script += f"bpy.context.scene.cycles.time_limit = {data['time_limit']}\n"
+
+			render_item.render(data['step'], script)
+
+
+class RenderThread(QObject):
+	progression_signal = Signal(int)
+
+	def __init__(self, *args, **kwargs):
+		super(RenderThread, self).__init__(*args, **kwargs)
+
+
+	def start(self, proc):
+		self.thread = Thread(target=self.run, args=(proc.stdout, ), daemon=True)
+		self.thread.start()
+		self.thread.join()
+
+
+	def run(self, out):
+		for byte_line in iter(out.readline, b""):
+			line = byte_line.decode("utf-8")
+			print(line)
+			samples = line.split("|")[-1].lower()
+			if "sample" in samples:
+				percent = eval(samples.split()[-1]) * 100
+				# print(percent)
+				self.progression_signal.emit(percent)
+		out.close()
+
+		self.progression_signal.emit(100)
 
 
 def main():

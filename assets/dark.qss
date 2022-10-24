@@ -28,3 +28,10 @@ QLineEdit::disabled{
 QLabel::disabled{
 	color: #666666;
 }
+
+QProgressBar{
+	border-style: solid;
+	border-color: #666666;
+	border-width: 1px;
+	text-align: center;
+}
