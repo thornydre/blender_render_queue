@@ -207,13 +207,11 @@ class RenderItemRenderer:
 	def render(self, step, script):
 		blender_path = "F:/prog/blender_git/branches/master_branch/bin/Release/blender.exe"
 
-		render_args = [blender_path, "-b", self.file_path, "--python-expr", script, "-j", step, "-E", "CYCLES", "-a", "--", "--cycles-device", "OPTIX+CPU"]
+		render_args = [blender_path, "-b", self.file_path, "--python-expr", script, "--addons", "path_maker", "-j", step, "-E", "CYCLES", "-a", "--", "--cycles-device", "OPTIX+CPU"]
 
 		proc = Popen(render_args, stdout=PIPE)
 
 		self.thread.start(proc)
-
-		
 
 
 class RenderQueueThread(QObject):
